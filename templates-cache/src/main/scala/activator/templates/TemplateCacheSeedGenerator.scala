@@ -10,12 +10,13 @@ import java.util.concurrent.TimeUnit
 import scala.concurrent.{ Future, Await }
 import java.net.URI
 
-/** This is a class that can be used within an sbt build to seed an Activator installation with pre-fetched templates and index.*/
+/** This is a class that can be used within an sbt build to seed an Activator installation with pre-fetched templates and index. */
 object TemplateCacheSeedGenerator {
 
   case class Arguments(
     localDirectory: File = new File("cache-repo"),
-    remoteRepos: IndexedSeq[URI] = IndexedSeq(new URI("http://downloads.typesafe.com/typesafe-activator")))
+    remoteRepos: IndexedSeq[URI] = IndexedSeq(new URI("http://downloads.typesafe.com/typesafe-activator")),
+    templates: Seq[String] = Seq.empty[String])
 
   def parseUsage(args: Array[String]): Arguments = {
     def parseImpl(args: Arguments, remaining: List[String]): Arguments =
@@ -25,16 +26,20 @@ object TemplateCacheSeedGenerator {
 
         case file :: Nil => args.copy(localDirectory = new File(file))
 
+        case "-remote" :: remoteUri :: rest => parseImpl(args.copy(remoteRepos = args.remoteRepos :+ new URI(remoteUri)), rest)
+        case "-file" :: file :: rest => parseImpl(args.copy(localDirectory = new File(file)), rest)
+        case "-templates" :: templateNames :: Nil =>
+          if (templateNames != "") args.copy(templates = templateNames.split(",").map(_.trim()))
+          else args
         case unknown =>
           sys.error(s"""Unknown argument: $unknown
-            Usage:  TemplateCacheSeedGenerator (-remote <uri>)... <cache directory>
+            Usage:  TemplateCacheSeedGenerator -remote <uri> -file <cache directory> -templates <template names separated by ",">
           """)
       }
     parseImpl(Arguments(), args.toList)
   }
 
   def main(args: Array[String]): Unit = {
-    // TODO - Actually parse stuff
     buildCaches(parseUsage(args))
   }
 
@@ -43,7 +48,6 @@ object TemplateCacheSeedGenerator {
     val cacheDir = arg.localDirectory
     // TODO - Pull this from config?
     implicit val timeout = akka.util.Timeout(120, TimeUnit.SECONDS)
-
     val system = akka.actor.ActorSystem()
 
     val remoteRepos = arg.remoteRepos.map(r => new repository.UriRemoteTemplateRepository(r, system.log))
@@ -58,9 +62,22 @@ object TemplateCacheSeedGenerator {
           baseDir = cacheDir,
           remotes = remoteRepos,
           autoUpdate = false)
+
+      val templateList =
+        if (arg.templates.isEmpty) cache.featured
+        else {
+          cache.metadata.map { it =>
+            val filtered = it.filter { tpl =>
+              arg.templates.contains(tpl.name)
+            }
+            if (filtered.toList.length != arg.templates.length) throw new RuntimeException(s"Could not find template(s) matching name(s): ${arg.templates.mkString(",")}")
+            filtered
+          }
+        }
+
       val templates =
         for {
-          templates <- cache.featured
+          templates <- templateList
           results <- Future.traverse(templates map (_.id))(cache.template)
         } yield results.toSeq.flatten
       Await.result(templates, duration)
