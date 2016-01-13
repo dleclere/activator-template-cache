@@ -54,6 +54,7 @@ object Layout {
 // Helper to pull down the layout all at once...
 class Layout(base: URI) {
   val currentIndexTag = Layout.currentIndexTagUri(base)
+  println("current index tag: " + currentIndexTag)
   def template(id: String) = Layout.templateFile(base, id)
   def index(hash: String) = Layout.indexUri(base, hash)
   def templateBundle(activatorVersion: String, id: String, templateName: String) =
